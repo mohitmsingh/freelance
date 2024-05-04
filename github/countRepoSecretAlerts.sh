@@ -27,13 +27,9 @@ for REPO in $REPO_LIST; do
         echo "$REPO,$message" >> $ORG"_secret_scanning_data.csv"
     else
         output=$(echo "$response" | jq -r '.[] | select(has("number")) | .number')
-        if [[ -z $output ]]; then
-            echo "$REPO,'unknown'" >> $ORG"_secret_scanning_data.csv"
-        else
-            count=$(echo "$output" | wc -l)
-            # Append repository name and secret scanning count to the Excel file
-            echo "$REPO,$count" >> $ORG"_secret_scanning_data.csv"
-        fi
+        count=$(echo "$output" | wc -l)
+        # Append repository name and secret scanning count to the Excel file
+        echo "$REPO,$count" >> $ORG"_secret_scanning_data.csv"
     fi
 done
 echo "Secret scanning data saved to secret_scanning_data.csv"
