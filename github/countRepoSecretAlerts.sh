@@ -6,7 +6,7 @@ TOKEN=""
 # GitHub organization name
 ORG=""
 
-rm -rf "${ORG}_repo_list.txt" "${ORG}_secret_scanning_data.csv" ${ORG}
+rm -rf "${ORG}_repo_list.txt" "${ORG}_secret_scanning_report.csv" ${ORG}
 mkdir ${ORG}
 # Initialize an empty array to store repository names
 REPO_LIST=()
@@ -29,7 +29,7 @@ while true; do
     fi
 
     # Extract repository names from the response and add them to the array
-    repos=$(echo "$response" | jq -r '.[].full_name')
+    repos=$(echo "$response" | jq -r '.[].name')
     REPO_LIST+=( $repos )
 
     # Check if there are more pages to fetch
@@ -47,7 +47,7 @@ for repo in "${REPO_LIST[@]}"; do
 done
 
 # Create an Excel file to store the secret scanning data
-echo "Repository,Secrets Alert Count" > "${ORG}_secret_scanning_data.csv"
+echo "Repository,Secrets Alert Count" > "${ORG}_secret_scanning_report.csv"
 
 # Loop through each repository to fetch secret scanning data
 for REPO in "${REPO_LIST[@]}"; do
@@ -55,21 +55,21 @@ for REPO in "${REPO_LIST[@]}"; do
     # Fetch secret scanning data for the repository
     response=$(curl -s -H "Authorization: token $TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/$REPO/secret-scanning/alerts")
+              "https://api.github.com/repos/$ORG/$REPO/secret-scanning/alerts")
     
-    echo "${response}" > ${REPO}_secret_alerts.json
+    echo "${response}" > ${ORG}/${REPO}_secret_alerts.json
 
     if [[ $(echo "$response" | jq -e 'has("message")') == true ]]; then
         message=$(echo "$response" | jq -r '.message')
-        echo "$REPO,$message" >> "${ORG}_secret_scanning_data.csv"
+        echo "$REPO,$message" >> "${ORG}_secret_scanning_report.csv"
     else
         count=$(echo "$response" | jq length)
         # Check if response is an array before counting its length
         if [[ $count != 0 ]]; then
-            echo "$REPO,$count" >> "${ORG}_secret_scanning_data.csv"
+            echo "$REPO,$count" >> "${ORG}_secret_scanning_report.csv"
         else
-            echo "$REPO,Empty" >> "${ORG}_secret_scanning_data.csv"
+            echo "$REPO,Empty" >> "${ORG}_secret_scanning_report.csv"
         fi
     fi
 done
-echo "Secret scanning data saved to ${ORG}_secret_scanning_data.csv"
+echo "Secret scanning data saved to ${ORG}_secret_scanning_report.csv"
