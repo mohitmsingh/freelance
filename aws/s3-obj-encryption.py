@@ -4,12 +4,13 @@ from datetime import datetime
 import csv
 import json
 
+# # setting up default profile for session
+# boto3.setup_default_session(profile_name='PROFILE_NAME_FROM_YOUR_MACHINE')
 
 def create_inventory(bucket_name):
     s3 = boto3.client('s3')
     objects = s3.list_objects_v2(Bucket=bucket_name)
     inventory = []
-
     for obj in objects.get('Contents', []):
         inventory.append({
             'Bucket': bucket_name,
@@ -17,9 +18,7 @@ def create_inventory(bucket_name):
             'LastModified': obj['LastModified'],
             'Size': obj['Size']
         })
-
     return inventory
-
 
 def save_inventory_to_s3(inventory, target_bucket, original_bucket_name, kms_key_id):
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -76,10 +75,9 @@ def encrypt_existing_objects(bucket_name, kms_key_id):
                 ServerSideEncryption='aws:kms',
                 SSEKMSKeyId=kms_key_id
             )
-            print(f'Encrypted {obj["Key"]}')
+            print(f'Encrypted {obj["Key"]} of {bucket_name}')
         except ClientError as e:
             print(e)
-
 
 def lambda_handler(event, context):
     bucket_names = event['bucket_names']
