@@ -4,6 +4,7 @@ from datetime import datetime
 import csv
 import json
 
+
 def create_inventory(bucket_name):
     s3 = boto3.client('s3')
     objects = s3.list_objects_v2(Bucket=bucket_name)
@@ -11,6 +12,7 @@ def create_inventory(bucket_name):
 
     for obj in objects.get('Contents', []):
         inventory.append({
+            'Bucket': bucket_name,
             'Key': obj['Key'],
             'LastModified': obj['LastModified'],
             'Size': obj['Size']
@@ -39,28 +41,26 @@ def save_inventory_to_s3(inventory, target_bucket, original_bucket_name, kms_key
         print(e)
 
 
-def create_manifest_file(inventory, original_bucket_name):
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    manifest_file_name = f"{original_bucket_name}-manifest-{date_str}.csv"
-    manifest_file_path = f"/tmp/{manifest_file_name}"
-
-    with open(manifest_file_path, 'w', newline='') as csvfile:
+def append_to_manifest_file(inventory, manifest_file_path):
+    with open(manifest_file_path, 'a', newline='') as csvfile:
         fieldnames = ['Bucket', 'Key']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
         for item in inventory:
-            writer.writerow({'Bucket': original_bucket_name, 'Key': item['Key']})
-
-    return manifest_file_path, manifest_file_name
+            writer.writerow({'Bucket': item['Bucket'], 'Key': item['Key']})
 
 
-def save_manifest_to_s3(manifest_file_path, manifest_file_name, target_bucket):
+def save_manifest_to_s3(manifest_file_path, target_bucket, kms_key_id):
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    manifest_file_name = f"combined-manifest-{date_str}.csv"
+
     s3 = boto3.client('s3')
     try:
-        s3.upload_file(manifest_file_path, target_bucket, f'manifests/{manifest_file_name}')
+        s3.upload_file(manifest_file_path, target_bucket, f'manifests/{manifest_file_name}',
+                       ExtraArgs={'ServerSideEncryption': 'aws:kms', 'SSEKMSKeyId': kms_key_id})
         print(f'Manifest saved to s3://{target_bucket}/manifests/{manifest_file_name}')
     except ClientError as e:
         print(e)
+
 
 def encrypt_existing_objects(bucket_name, kms_key_id):
     s3 = boto3.client('s3')
@@ -80,19 +80,30 @@ def encrypt_existing_objects(bucket_name, kms_key_id):
         except ClientError as e:
             print(e)
 
+
 def lambda_handler(event, context):
     bucket_names = event['bucket_names']
     kms_key_id = event['kms_key_id']
     target_bucket = event['target_bucket']
 
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    manifest_file_path = f"/tmp/combined-manifest-{date_str}.csv"
+
+    # Create an empty manifest file with headers if it doesn't exist
+    with open(manifest_file_path, 'w', newline='') as csvfile:
+        fieldnames = ['Bucket', 'Key']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
     for bucket_name in bucket_names:
-        # Create and save inventory
+        # Create inventory
         inventory = create_inventory(bucket_name)
+
+        # Save inventory to S3
         save_inventory_to_s3(inventory, target_bucket, bucket_name, kms_key_id)
 
-        # Create and save manifest
-        manifest_file_path, manifest_file_name = create_manifest_file(inventory, bucket_name)
-        save_manifest_to_s3(manifest_file_path, manifest_file_name, target_bucket)
+        # Append to manifest
+        append_to_manifest_file(inventory, manifest_file_path)
 
         # Encrypt existing objects
         encrypt_existing_objects(bucket_name, kms_key_id)
@@ -124,6 +135,9 @@ def lambda_handler(event, context):
             print(f'Bucket policy updated for {bucket_name}')
         except ClientError as e:
             print(e)
+
+    # Save the combined manifest to S3
+    save_manifest_to_s3(manifest_file_path, target_bucket, kms_key_id)
 
 
 # Testing Lambda locally
