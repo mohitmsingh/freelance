@@ -7,6 +7,9 @@ KMS_KEY_ID = "arn:aws:kms:region:account-id:key/key-id"
 # List of buckets to encrypt
 BUCKETS = ["bucket1", "bucket2"]
 
+# # setting up default profile for session
+# boto3.setup_default_session(profile_name='PROFILE_NAME_FROM_YOUR_MACHINE')
+
 # Initialize S3 client
 s3_client = boto3.client('s3')
 
