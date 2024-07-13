@@ -3,6 +3,9 @@ from botocore.exceptions import ClientError
 import json
 
 def lambda_handler(event, context):
+    # # setting up default profile for session
+    # boto3.setup_default_session(profile_name='PROFILE_NAME_FROM_YOUR_MACHINE')
+
     s3_client = boto3.client('s3')
     kms_key_id = 'arn:aws:kms:region:account-id:key/key-id'  # Replace with your KMS key ID
 
@@ -55,6 +58,9 @@ def lambda_handler(event, context):
                 continuation_token = objects_response.get('NextContinuationToken')
             else:
                 break
+        # # setting up default profile for session
+        # boto3.setup_default_session(profile_name='PROFILE_NAME_FROM_YOUR_MACHINE')
+
         # Ensure future objects are encrypted at bucket level
         s3 = boto3.client('s3')
         bucket_policy = {
@@ -93,8 +99,8 @@ def lambda_handler(event, context):
                 Policy=json.dumps(bucket_policy)
             )
             print(f'Bucket policy updated for {bucket}')
-        except ClientError as e: (
-                print(e))
+        except ClientError as e:
+            (print(e))
     return {
         'statusCode': 200,
         'body': 'Completed encryption update for all objects in specified buckets'
