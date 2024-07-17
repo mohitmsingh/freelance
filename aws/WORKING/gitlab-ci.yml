@@ -1,0 +1,38 @@
+stages:
+  - install_dependencies
+  - create_and_upload_manifest
+  - trigger_batch_job
+
+variables:
+#  AWS_ACCESS_KEY_ID: "your_aws_access_key_id"
+#  AWS_SECRET_ACCESS_KEY: "your_aws_secret_access_key"
+  AWS_DEFAULT_REGION: "your_aws_region"
+  ACCOUNT_NAME: "dev-cicm"
+  BUCKET_SCOPE: "all"
+  MANIFEST_BUCKET: "manifest-metadata"
+  NEW_KMS_KEY: "your-new-kms-key"
+  LAMBDA_FUNCTION_ARN: "your-iam-role"
+
+#before_script:
+#  - apt-get update -qy
+#  - apt-get install -y python3 python3-pip
+
+install_dependencies:
+  stage: install_dependencies
+  script:
+    - echo "Installing Python dependencies"
+    - pip3 install -r requirements.txt
+
+create_and_upload_manifest:
+  stage: create_and_upload_manifest
+  script:
+    - python3 create_upload_manifest.py --account-name $ACCOUNT_NAME --buckets $BUCKETS --manifest-bucket $MANIFEST_BUCKET
+  artifacts:
+    paths:
+      - manifest.csv
+      - unique_kms_key.csv
+
+trigger_batch_job:
+  stage: trigger_batch_job
+  script:
+    - python3 trigger-s3-encryption.py $ACCOUNT_NAME $MANIFEST_BUCKET $NEW_KMS_KEY $LAMBDA_FUNCTION_ARN
