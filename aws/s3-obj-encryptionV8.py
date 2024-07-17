@@ -1,61 +1,10 @@
 import boto3
 import csv
 from io import StringIO
-import json
-
-
-def update_bucket_policy(s3_client, bucket_name, kms_key_id):
-    try:
-        policy = s3_client.get_bucket_policy(Bucket=bucket_name)
-        policy_json = json.loads(policy['Policy'])
-
-        # Define the required statement
-        kms_statement = {
-            "Sid": "AllowKMSAccess",
-            "Effect": "Allow",
-            "Principal": "*",
-            "Action": "s3:PutObject",
-            "Resource": f"arn:aws:s3:::{bucket_name}/*",
-            "Condition": {
-                "StringEquals": {
-                    "s3:x-amz-server-side-encryption": "aws:kms",
-                    "s3:x-amz-server-side-encryption-aws-kms-key-id": kms_key_id
-                }
-            }
-        }
-
-        # Check if the statement already exists
-        for statement in policy_json['Statement']:
-            if statement == kms_statement:
-                print(f'Bucket policy already contains the required KMS key statement for bucket: {bucket_name}')
-                return
-
-        # Add the statement to the policy
-        policy_json['Statement'].append(kms_statement)
-
-        # Update the bucket policy
-        s3_client.put_bucket_policy(
-            Bucket=bucket_name,
-            Policy=json.dumps(policy_json)
-        )
-        print(f'Updated bucket policy for {bucket_name}')
-
-    except s3_client.exceptions.NoSuchBucketPolicy:
-        # No policy exists, create a new one
-        policy_json = {
-            "Version": "2012-10-17",
-            "Statement": [kms_statement]
-        }
-        s3_client.put_bucket_policy(
-            Bucket=bucket_name,
-            Policy=json.dumps(policy_json)
-        )
-        print(f'Created new bucket policy for {bucket_name}')
-    except Exception as e:
-        print(f'Error updating bucket policy for {bucket_name}: {e}')
-
+from botocore.exceptions import ClientError
 
 def lambda_handler(event, context):
+    # Replace these with your bucket and manifest file name
     kms_key_id = event['kms_key_id']
     manifest_bucket = event['manifest_bucket']
     manifest_key = event['manifest_key']
@@ -79,12 +28,11 @@ def lambda_handler(event, context):
             continue
         bucket_name, object_key = row
 
-        # Update the bucket policy
-        update_bucket_policy(s3_client, bucket_name, kms_key_id)
-
         # Check if KMS encryption is applied to the object
         try:
             response = s3_client.head_object(Bucket=bucket_name, Key=object_key)
+            # print(f'{response}')
+
             encryption = response.get('ServerSideEncryption')
             existing_kms_key_id = response.get('SSEKMSKeyId')
 
@@ -103,7 +51,8 @@ def lambda_handler(event, context):
                     )
                     print(f'Updated KMS key for {object_key} in {bucket_name}')
             elif encryption != 'aws:kms':
-                # Apply KMS encryption for the first time
+
+                # Apply KMS encryption
                 copy_source = {'Bucket': bucket_name, 'Key': object_key}
                 s3_client.copy_object(
                     Bucket=bucket_name,
@@ -117,16 +66,57 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f'Error processing {object_key} in {bucket_name}: {e}')
 
+    # Set default encryption for each bucket
+    for row in csv_reader:
+        if len(row) != 2:
+            continue
+
+        bucket_name, _ = row
+        try:
+            response = s3_client.get_bucket_encryption(Bucket=bucket_name)
+            current_sse_algorithm = response['ServerSideEncryptionConfiguration']['Rules'][0]['ApplyServerSideEncryptionByDefault']['SSEAlgorithm']
+            current_kms_key_id = response['ServerSideEncryptionConfiguration']['Rules'][0]['ApplyServerSideEncryptionByDefault'].get('KMSMasterKeyID')
+
+            if current_sse_algorithm == 'aws:kms' and current_kms_key_id == kms_key_id:
+                print("Bucket already uses the specified KMS key for encryption. No changes required.")
+                return
+
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ServerSideEncryptionConfigurationNotFoundError':
+                print("No existing encryption configuration found. Applying KMS encryption.")
+            else:
+                print(f"Error retrieving encryption configuration: {e}")
+                return
+
+        # Define the new encryption configuration
+        encryption_configuration = {
+            "Rules": [
+                {
+                    "ApplyServerSideEncryptionByDefault": {
+                        "SSEAlgorithm": "aws:kms",
+                        "KMSMasterKeyID": kms_key_id
+                    }
+                }
+            ]
+        }
+
+        # Apply the encryption configuration to the bucket
+        s3_client.put_bucket_encryption(
+            Bucket=bucket_name,
+            ServerSideEncryptionConfiguration=encryption_configuration
+        )
+        print(f"Encryption configuration updated successfully for {bucket_name} to use the specified KMS key.")
     return {
         'statusCode': 200,
         'body': 'Processing completed successfully.'
     }
 
-
 # Testing Lambda locally
+
 if __name__ == "__main__":
     event = {
-        'kms_key_id': 'arn:aws:kms:us-east-1:123456789012:key/5ad0020b-85ab-43bf-9c8e-2e1b39f3d253',
+        # 'bucket_names': ['manifest-demo'],
+        'kms_key_id': 'arn:aws:kms:us-east-1:077911745872:key/5ad0020b-85ab-43bf-9c8e-2e1b39f3d253',
         'manifest_bucket': 'manifest-metadata',
         'manifest_key': 'manifest.csv'
     }

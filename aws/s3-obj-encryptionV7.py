@@ -2,58 +2,48 @@ import boto3
 import csv
 from io import StringIO
 import json
-
+from botocore.exceptions import ClientError
 
 def update_bucket_policy(s3_client, bucket_name, kms_key_id):
     try:
-        policy = s3_client.get_bucket_policy(Bucket=bucket_name)
-        policy_json = json.loads(policy['Policy'])
+        # Get the current bucket encryption configuration
+        try:
+            response = s3_client.get_bucket_encryption(Bucket=bucket_name)
+            current_sse_algorithm = response['ServerSideEncryptionConfiguration']['Rules'][0]['ApplyServerSideEncryptionByDefault']['SSEAlgorithm']
+            current_kms_key_id = response['ServerSideEncryptionConfiguration']['Rules'][0]['ApplyServerSideEncryptionByDefault'].get('KMSMasterKeyID')
 
-        # Define the required statement
-        kms_statement = {
-            "Sid": "AllowKMSAccess",
-            "Effect": "Allow",
-            "Principal": "*",
-            "Action": "s3:PutObject",
-            "Resource": f"arn:aws:s3:::{bucket_name}/*",
-            "Condition": {
-                "StringEquals": {
-                    "s3:x-amz-server-side-encryption": "aws:kms",
-                    "s3:x-amz-server-side-encryption-aws-kms-key-id": kms_key_id
-                }
-            }
-        }
-
-        # Check if the statement already exists
-        for statement in policy_json['Statement']:
-            if statement == kms_statement:
-                print(f'Bucket policy already contains the required KMS key statement for bucket: {bucket_name}')
+            if current_sse_algorithm == 'aws:kms' and current_kms_key_id == kms_key_id:
+                print("Bucket already uses the specified KMS key for encryption. No changes required.")
                 return
 
-        # Add the statement to the policy
-        policy_json['Statement'].append(kms_statement)
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ServerSideEncryptionConfigurationNotFoundError':
+                print("No existing encryption configuration found. Applying KMS encryption.")
+            else:
+                print(f"Error retrieving encryption configuration: {e}")
+                return
 
-        # Update the bucket policy
-        s3_client.put_bucket_policy(
-            Bucket=bucket_name,
-            Policy=json.dumps(policy_json)
-        )
-        print(f'Updated bucket policy for {bucket_name}')
-
-    except s3_client.exceptions.NoSuchBucketPolicy:
-        # No policy exists, create a new one
-        policy_json = {
-            "Version": "2012-10-17",
-            "Statement": [kms_statement]
+        # Define the new encryption configuration
+        encryption_configuration = {
+            "Rules": [
+                {
+                    "ApplyServerSideEncryptionByDefault": {
+                        "SSEAlgorithm": "aws:kms",
+                        "KMSMasterKeyID": kms_key_id
+                    }
+                }
+            ]
         }
-        s3_client.put_bucket_policy(
-            Bucket=bucket_name,
-            Policy=json.dumps(policy_json)
-        )
-        print(f'Created new bucket policy for {bucket_name}')
-    except Exception as e:
-        print(f'Error updating bucket policy for {bucket_name}: {e}')
 
+        # Apply the encryption configuration to the bucket
+        s3_client.put_bucket_encryption(
+            Bucket=bucket_name,
+            ServerSideEncryptionConfiguration=encryption_configuration
+        )
+        print(f"Encryption configuration updated successfully for {bucket_name} to use the specified KMS key.")
+
+    except ClientError as e:
+        print(f"Error updating encryption configuration: {e}")
 
 def lambda_handler(event, context):
     kms_key_id = event['kms_key_id']
@@ -63,6 +53,7 @@ def lambda_handler(event, context):
     # Initialize a session using Amazon S3
     session = boto3.Session(profile_name='dev-cicm')
     # session = boto3.Session()
+
     s3_client = session.client('s3')
 
     # Download the manifest file
@@ -124,6 +115,8 @@ def lambda_handler(event, context):
 
 
 # Testing Lambda locally
+
+
 if __name__ == "__main__":
     event = {
         'kms_key_id': 'arn:aws:kms:us-east-1:123456789012:key/5ad0020b-85ab-43bf-9c8e-2e1b39f3d253',
